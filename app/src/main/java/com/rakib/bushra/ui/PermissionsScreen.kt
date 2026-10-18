@@ -74,6 +74,9 @@ fun PermissionsScreen(requestPerms: (Array<String>) -> Unit) {
         PermItem("Accessibility (অ্যাপের ভেতরে কাজ)", "ফেসবুক, WhatsApp ইত্যাদির ভেতরে ট্যাপ, লেখা, স্ক্রল",
             Perms.accessibilityEnabled(ctx)
         ) { Perms.openAccessibility(ctx) },
+        PermItem("নোটিফিকেশন পড়া", "\"কী মেসেজ এল?\" প্রশ্নের উত্তর দিতে",
+            Perms.notificationListenerEnabled(ctx)
+        ) { Perms.openNotificationListener(ctx) },
         PermItem("সেটিংস বদলানো", "উজ্জ্বলতা বদলানো",
             Perms.canWriteSettings(ctx)
         ) { Perms.openWriteSettings(ctx) },

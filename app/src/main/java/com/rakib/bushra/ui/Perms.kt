@@ -79,5 +79,17 @@ object Perms {
     fun openAppInfo(ctx: Context) =
         open(ctx, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri(ctx)))
 
+    fun openUrl(ctx: Context, url: String) =
+        open(ctx, Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+
+    fun notificationListenerEnabled(ctx: Context): Boolean {
+        val enabled = Settings.Secure.getString(ctx.contentResolver, "enabled_notification_listeners")
+            ?: return false
+        return enabled.contains(ctx.packageName)
+    }
+
+    fun openNotificationListener(ctx: Context) =
+        open(ctx, Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+
     fun openTtsSettings(ctx: Context) = open(ctx, Intent("com.android.settings.TTS_SETTINGS"))
 }

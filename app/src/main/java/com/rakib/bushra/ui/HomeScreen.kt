@@ -29,9 +29,11 @@ import com.rakib.bushra.core.BushraCore
 import com.rakib.bushra.core.BushraState
 import com.rakib.bushra.core.ChatLine
 import com.rakib.bushra.core.Phase
+import com.rakib.bushra.service.BushraService
 
 @Composable
 fun HomeScreen(onToggleService: () -> Unit) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     val phase by BushraState.phase.collectAsState()
     val running by BushraState.serviceRunning.collectAsState()
     val level by BushraState.level.collectAsState()
@@ -90,6 +92,13 @@ fun HomeScreen(onToggleService: () -> Unit) {
                 color = if (running) Clay.warn else Clay.accent,
                 modifier = Modifier.weight(1f)
             )
+            if (running) {
+                ClayButton(
+                    text = "শোনো",
+                    onClick = { BushraService.listenNow(ctx) },
+                    color = Clay.accent2
+                )
+            }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 ClaySwitch(kill) {
                     kill = it

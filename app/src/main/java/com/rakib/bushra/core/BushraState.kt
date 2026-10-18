@@ -1,6 +1,9 @@
 package com.rakib.bushra.core
 
 import kotlinx.coroutines.flow.MutableStateFlow
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 enum class Phase { IDLE, LISTENING, THINKING, SPEAKING }
 
@@ -18,7 +21,21 @@ object BushraState {
 
     fun addChat(fromUser: Boolean, text: String) {
         val cur = chat.value
-        val next = (cur + ChatLine(fromUser, text)).takeLast(60)
-        chat.value = next
+        chat.value = (cur + ChatLine(fromUser, text)).takeLast(60)
+    }
+}
+
+/** সমস্যা ধরার জন্য ছোট লগ: সেটিংস পেজে দেখা যায় */
+object BushraLog {
+    val lines = MutableStateFlow<List<String>>(emptyList())
+    private val fmt = SimpleDateFormat("HH:mm:ss", Locale.US)
+
+    fun add(tag: String, msg: String) {
+        val line = "${fmt.format(Date())} [$tag] $msg"
+        lines.value = (lines.value + line).takeLast(60)
+    }
+
+    fun clear() {
+        lines.value = emptyList()
     }
 }

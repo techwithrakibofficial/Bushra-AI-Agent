@@ -126,7 +126,22 @@ object Tools {
         a.put(fn("wait", "Wait a few seconds for a screen to load.",
             listOf("seconds" to p("integer", "1-10")), listOf("seconds")))
 
-        // ---- স্মৃতি ----
+        a.put(fn("look_at_screen", "Take a screenshot and visually understand the screen (use when read_screen shows too little, e.g. images, games, videos).",
+            listOf("question" to p(str, "What to find out from the screen")), listOf("question")))
+        a.put(fn("media_control", "Control music/video playback of the currently playing app.",
+            listOf("action" to enumP("Action", listOf("play", "pause", "next", "previous", "stop",
+                "volume_up", "volume_down"))), listOf("action")))
+        a.put(fn("get_weather", "Get current weather for a place.",
+            listOf("place" to p(str, "City or place name")), listOf("place")))
+        a.put(fn("read_notifications", "Read the most recent notifications on the phone.",
+            listOf("count" to p("integer", "How many (default 5, max 15)"))))
+
+        // ---- স্মৃতি ও ডাকনাম ----
+        a.put(fn("save_contact_alias", "Save a nickname for a contact so it is understood later (e.g. 'আম্মু' -> saved contact name or number).",
+            listOf("nickname" to p(str, "The nickname the user says"),
+                "contact" to p(str, "Real saved contact name or phone number")), listOf("nickname", "contact")))
+        a.put(fn("remove_contact_alias", "Delete a saved contact nickname.",
+            listOf("nickname" to p(str, "Nickname to delete")), listOf("nickname")))
         a.put(fn("remember", "Save a fact about the user to long-term memory.",
             listOf("key" to p(str, "Short label, e.g. 'আম্মুর নাম্বার' or 'পছন্দের গান'"),
                 "value" to p(str, "The fact")), listOf("key", "value")))

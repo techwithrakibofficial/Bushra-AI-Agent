@@ -2,12 +2,17 @@ package com.rakib.bushra.service
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.graphics.Bitmap
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
+import android.util.Base64
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import kotlinx.coroutines.suspendCancellableCoroutine
+import java.io.ByteArrayOutputStream
+import kotlin.coroutines.resume
 
 /** অ্যাপের ভেতরে স্ক্রিন পড়া, ট্যাপ, লেখা, স্ক্রল ও সিস্টেম বাটন চাপার সেবা */
 class BushraAccessibilityService : AccessibilityService() {
@@ -169,6 +174,50 @@ class BushraAccessibilityService : AccessibilityService() {
         val args = Bundle()
         args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
         return target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+    }
+
+    // ------------------------------------------------------------------ স্ক্রিনশট (ছবি দেখে বোঝার জন্য)
+
+    /** স্ক্রিনের JPEG (base64) ফেরত দেয়; Android 11+ লাগে। ব্যর্থ হলে null */
+    suspend fun screenshotBase64(): String? {
+        if (Build.VERSION.SDK_INT < 30) return null
+        return suspendCancellableCoroutine { cont ->
+            try {
+                takeScreenshot(
+                    android.view.Display.DEFAULT_DISPLAY,
+                    mainExecutor,
+                    object : TakeScreenshotCallback {
+                        override fun onSuccess(result: ScreenshotResult) {
+                            try {
+                                val hw = Bitmap.wrapHardwareBuffer(result.hardwareBuffer, result.colorSpace)
+                                val soft = hw?.copy(Bitmap.Config.ARGB_8888, false)
+                                result.hardwareBuffer.close()
+                                if (soft == null) {
+                                    if (cont.isActive) cont.resume(null)
+                                    return
+                                }
+                                val scale = 720f / maxOf(soft.width, soft.height).toFloat()
+                                val small = if (scale < 1f)
+                                    Bitmap.createScaledBitmap(
+                                        soft, (soft.width * scale).toInt(), (soft.height * scale).toInt(), true
+                                    ) else soft
+                                val out = ByteArrayOutputStream()
+                                small.compress(Bitmap.CompressFormat.JPEG, 70, out)
+                                if (cont.isActive) cont.resume(Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP))
+                            } catch (e: Exception) {
+                                if (cont.isActive) cont.resume(null)
+                            }
+                        }
+
+                        override fun onFailure(errorCode: Int) {
+                            if (cont.isActive) cont.resume(null)
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                if (cont.isActive) cont.resume(null)
+            }
+        }
     }
 
     // ------------------------------------------------------------------ সিস্টেম বাটন

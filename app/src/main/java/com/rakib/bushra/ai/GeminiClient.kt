@@ -1,5 +1,6 @@
 package com.rakib.bushra.ai
 
+import com.rakib.bushra.core.BushraLog
 import com.rakib.bushra.core.Prefs
 import org.json.JSONArray
 import org.json.JSONObject
@@ -9,10 +10,11 @@ import java.net.URL
 class GeminiResult(
     val parts: JSONArray?,
     val error: String?,
-    val retryNext: Boolean = false
+    val retryNext: Boolean = false,
+    val model: String = ""
 )
 
-/** Gemini REST API ক্লায়েন্ট: ফাংশন কলিং + একাধিক মডেলের ফলব্যাক */
+/** Gemini REST (generateContent) ক্লায়েন্ট: ফাংশন কলিং + একাধিক ফ্রি মডেলের ফলব্যাক */
 class GeminiClient(private val prefs: Prefs) {
 
     fun generate(system: String, contents: List<JSONObject>, tools: JSONArray?): GeminiResult {
@@ -26,9 +28,10 @@ class GeminiClient(private val prefs: Prefs) {
             val r = try {
                 call(m, key, system, contents, tools)
             } catch (e: Exception) {
-                GeminiResult(null, "নেটওয়ার্ক সমস্যা: ${e.message}", true)
+                GeminiResult(null, "নেটওয়ার্ক সমস্যা: ${e.message}", true, m)
             }
             if (r.error == null) return r
+            BushraLog.add("এআই", "$m: ${r.error}".take(160))
             last = r
             if (!r.retryNext) return r
         }
@@ -51,19 +54,13 @@ class GeminiClient(private val prefs: Prefs) {
         for (c in contents) arr.put(c)
         body.put("contents", arr)
         if (tools != null && tools.length() > 0) {
-            body.put(
-                "tools",
-                JSONArray().put(JSONObject().put("functionDeclarations", tools))
-            )
+            body.put("tools", JSONArray().put(JSONObject().put("functionDeclarations", tools)))
             body.put(
                 "toolConfig",
-                JSONObject().put(
-                    "functionCallingConfig",
-                    JSONObject().put("mode", "AUTO")
-                )
+                JSONObject().put("functionCallingConfig", JSONObject().put("mode", "AUTO"))
             )
         }
-        body.put("generationConfig", JSONObject().put("temperature", 0.8))
+        body.put("generationConfig", JSONObject().put("temperature", 0.9))
 
         val url = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent")
         val conn = url.openConnection() as HttpURLConnection
@@ -86,19 +83,21 @@ class GeminiClient(private val prefs: Prefs) {
                 } catch (e: Exception) {
                     text.take(200)
                 }
-                val retry = code == 429 || code == 404 || code >= 500
-                return GeminiResult(null, "HTTP $code: $msg", retry)
+                // key-ই ভুল হলে অন্য মডেলে চেষ্টা করে লাভ নেই; বাকি সব ক্ষেত্রে পরের মডেল চেষ্টা হবে
+                val keyBad = code == 401 ||
+                    (code == 400 && msg.contains("API key", ignoreCase = true))
+                return GeminiResult(null, "HTTP $code: $msg", !keyBad, model)
             }
 
             val json = JSONObject(text)
             val cands = json.optJSONArray("candidates")
             if (cands == null || cands.length() == 0) {
                 val block = json.optJSONObject("promptFeedback")?.optString("blockReason") ?: ""
-                return GeminiResult(null, "উত্তর আসেনি $block".trim(), false)
+                return GeminiResult(null, "উত্তর আসেনি $block".trim(), true, model)
             }
             val content = cands.getJSONObject(0).optJSONObject("content")
             val parts = content?.optJSONArray("parts") ?: JSONArray()
-            return GeminiResult(parts, null)
+            return GeminiResult(parts, null, false, model)
         } finally {
             conn.disconnect()
         }

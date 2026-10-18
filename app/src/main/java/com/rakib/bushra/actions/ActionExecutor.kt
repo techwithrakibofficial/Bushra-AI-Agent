@@ -20,6 +20,7 @@ import android.os.Bundle
 import android.provider.AlarmClock
 import android.provider.CalendarContract
 import android.provider.ContactsContract
+import android.view.KeyEvent
 import android.provider.MediaStore
 import android.provider.Settings
 import android.telecom.TelecomManager
@@ -37,6 +38,10 @@ import java.util.Locale
 
 /** Gemini-র ডাকা প্রতিটি টুলের আসল কাজ এখানে হয় */
 class ActionExecutor(private val ctx: Context, private val prefs: Prefs) {
+
+    /** স্ক্রিনের ছবি + প্রশ্ন নিয়ে উত্তর দেয়; BushraCore এটা বসিয়ে দেয় */
+    @Volatile
+    var vision: (suspend (String, String) -> String)? = null
 
     private data class Contact(val name: String, val number: String)
 
@@ -110,6 +115,18 @@ class ActionExecutor(private val ctx: Context, private val prefs: Prefs) {
                 val s = a.optInt("seconds", 2).coerceIn(1, 10)
                 delay(s * 1000L)
                 res(true, "$s সেকেন্ড অপেক্ষা করেছি")
+            }
+            "look_at_screen" -> lookAtScreen(a.optString("question"))
+            "media_control" -> mediaControl(a.optString("action"))
+            "get_weather" -> getWeather(a.optString("place"))
+            "read_notifications" -> readNotifications(a.optInt("count", 5))
+            "save_contact_alias" -> {
+                prefs.putAlias(a.optString("nickname"), a.optString("contact"))
+                res(true, "'${a.optString("nickname")}' ডাকনামটা সেভ করলাম")
+            }
+            "remove_contact_alias" -> {
+                prefs.removeAlias(a.optString("nickname"))
+                res(true, "ডাকনাম মুছে দিলাম")
             }
             "remember" -> {
                 prefs.putMemory(a.optString("key"), a.optString("value"))
@@ -209,8 +226,19 @@ class ActionExecutor(private val ctx: Context, private val prefs: Prefs) {
     }
 
     private fun resolveNumber(target: String): Contact? {
-        val t = target.trim()
+        var t = target.trim()
         if (t.isEmpty()) return null
+        // সেভ করা ডাকনাম আগে দেখা হয়
+        val aliases = prefs.aliasMap()
+        val hit = aliases.entries.firstOrNull { it.key.trim().equals(t, ignoreCase = true) }
+            ?: aliases.entries.firstOrNull {
+                val k = it.key.trim().lowercase()
+                k.isNotEmpty() && (t.lowercase().contains(k) || k.contains(t.lowercase()))
+            }
+        if (hit != null) {
+            t = hit.value.trim()
+            if (looksLikeNumber(t)) return Contact(hit.key, t)
+        }
         if (looksLikeNumber(t)) return Contact(t, t)
         return findContacts(t).firstOrNull()
     }
@@ -598,5 +626,105 @@ class ActionExecutor(private val ctx: Context, private val prefs: Prefs) {
         val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val t = cm.primaryClip?.getItemAt(0)?.text?.toString()
         if (t.isNullOrEmpty()) res(false, "ক্লিপবোর্ড খালি বা পড়ার অনুমতি নেই") else res(true, t)
+    }
+
+    // ------------------------------------------------------------------ নতুন অ্যাকশন
+
+    private suspend fun lookAtScreen(question: String): JSONObject {
+        val svc = BushraAccessibilityService.instance
+            ?: return res(false, "Accessibility সেবা চালু নেই")
+        val ask = vision ?: return res(false, "ছবি বোঝার সুবিধা এখন নেই")
+        val img = svc.screenshotBase64()
+            ?: return res(false, "স্ক্রিনশট নেওয়া যায়নি (Android 11+ লাগে)")
+        val answer = ask(img, question.ifBlank { "স্ক্রিনে কী আছে?" })
+        return res(true, answer)
+    }
+
+    private fun mediaControl(action: String): JSONObject {
+        val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val code = when (action) {
+            "play" -> KeyEvent.KEYCODE_MEDIA_PLAY
+            "pause" -> KeyEvent.KEYCODE_MEDIA_PAUSE
+            "next" -> KeyEvent.KEYCODE_MEDIA_NEXT
+            "previous" -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
+            "stop" -> KeyEvent.KEYCODE_MEDIA_STOP
+            "volume_up" -> {
+                am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
+                return res(true, "ভলিউম বাড়ানো হয়েছে")
+            }
+            "volume_down" -> {
+                am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
+                return res(true, "ভলিউম কমানো হয়েছে")
+            }
+            else -> return res(false, "অজানা মিডিয়া কমান্ড")
+        }
+        mediaKey(code)
+        return res(true, "মিডিয়া: $action")
+    }
+
+    fun mediaKey(code: Int) {
+        val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
+        am.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+    }
+
+    fun isMusicActive(): Boolean {
+        val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        return am.isMusicActive
+    }
+
+    private fun httpGet(url: String): String {
+        val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        try {
+            conn.connectTimeout = 10000
+            conn.readTimeout = 15000
+            return conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /** Open-Meteo: ফ্রি, কোনো API key লাগে না */
+    private fun getWeather(place: String): JSONObject {
+        if (place.isBlank()) return res(false, "জায়গার নাম বলা হয়নি")
+        val geo = JSONObject(httpGet("https://geocoding-api.open-meteo.com/v1/search?count=1&name=" + Uri.encode(place)))
+        val r = geo.optJSONArray("results")?.optJSONObject(0)
+            ?: return res(false, "'$place' জায়গাটা খুঁজে পাইনি")
+        val lat = r.optDouble("latitude")
+        val lon = r.optDouble("longitude")
+        val w = JSONObject(
+            httpGet(
+                "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon" +
+                    "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto"
+            )
+        ).optJSONObject("current") ?: return res(false, "আবহাওয়ার তথ্য পাইনি")
+        val code = w.optInt("weather_code")
+        val desc = when (code) {
+            0 -> "পরিষ্কার আকাশ"
+            1, 2 -> "আংশিক মেঘলা"
+            3 -> "মেঘলা"
+            45, 48 -> "কুয়াশা"
+            in 51..57 -> "গুঁড়িগুঁড়ি বৃষ্টি"
+            in 61..67 -> "বৃষ্টি"
+            in 71..77 -> "তুষারপাত"
+            in 80..82 -> "ঝমঝম বৃষ্টি"
+            in 95..99 -> "বজ্রসহ বৃষ্টি"
+            else -> "অজানা"
+        }
+        return res(
+            true,
+            "${r.optString("name")}: $desc, তাপমাত্রা ${w.optDouble("temperature_2m")}°C, " +
+                "আর্দ্রতা ${w.optInt("relative_humidity_2m")}%, বাতাস ${w.optDouble("wind_speed_10m")} কিমি/ঘণ্টা"
+        )
+    }
+
+    private fun readNotifications(count: Int): JSONObject {
+        val list = com.rakib.bushra.service.BushraNotificationListener.recent(count.coerceIn(1, 15))
+        if (list.isEmpty()) {
+            return res(false, "কোনো নোটিফিকেশন পাইনি; নোটিফিকেশন পড়ার পারমিশন চালু আছে কি না দেখো")
+        }
+        val arr = JSONArray()
+        for (l in list) arr.put(l)
+        return res(true, "${list.size}টি নোটিফিকেশন").put("notifications", arr)
     }
 }
