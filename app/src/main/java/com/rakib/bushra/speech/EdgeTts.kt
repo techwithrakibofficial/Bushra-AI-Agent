@@ -62,9 +62,10 @@ object EdgeTts {
         volume: String
     ): ByteArray? {
         var a = attempt(text, shortVoice, rate, pitch, volume)
-        if (a.audio == null && a.status == 403 && a.dateHeader != null) {
+        val dh = a.dateHeader
+        if (a.audio == null && a.status == 403 && dh != null) {
             // ফোনের ঘড়ি সার্ভারের সাথে না মিললে টোকেন ভুল হয়: সার্ভারের সময় দেখে ঠিক করে আবার চেষ্টা
-            val server = parseDate(a.dateHeader)
+            val server = parseDate(dh)
             if (server != null) {
                 skewSeconds = server / 1000 - System.currentTimeMillis() / 1000
                 a = attempt(text, shortVoice, rate, pitch, volume)
