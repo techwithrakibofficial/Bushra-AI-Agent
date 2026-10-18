@@ -24,7 +24,15 @@ jobs:
           gradle-version: '8.9'
 
       - name: Build debug APK
-        run: gradle assembleDebug --stacktrace
+        shell: bash
+        run: |
+          set +e
+          gradle assembleDebug --stacktrace > build.log 2>&1
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            grep -E "^e: |error:|What went wrong" -A2 build.log | head -40 | while IFS= read -r l; do echo "::error::${l:0:900}"; done
+          fi
+          exit $rc
 
       - name: Upload APK as artifact
         uses: actions/upload-artifact@v4
