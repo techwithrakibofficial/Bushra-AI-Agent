@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="clay_bg">#E7E1F7</color>
-    <color name="ic_bg">#FF8FB1</color>
+    <color name="clay_bg">#031017</color>
+    <color name="ic_bg">#14D9C6</color>
 
-    <style name="Theme.Bushra" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Theme.Bushra" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/clay_bg</item>
         <item name="android:statusBarColor">@color/clay_bg</item>
         <item name="android:navigationBarColor">@color/clay_bg</item>
-        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 </resources>

@@ -11,8 +11,8 @@ android {
         applicationId = "com.rakib.bushra"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
     }
 
     // একই চাবি দিয়ে সাইন হয়, তাই নতুন ভার্সন আগেরটার ওপর ইনস্টল করা যায় (আনইনস্টল লাগে না)

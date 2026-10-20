@@ -30,6 +30,11 @@ class Prefs(context: Context) {
         get() = sp.getString("models", DEFAULT_MODELS) ?: DEFAULT_MODELS
         set(v) = sp.edit().putString("models", v).apply()
 
+    /** অ্যাপের ভাষা: "en" (ডিফল্ট) বা "bn" */
+    var uiLang: String
+        get() = if (sp.getString("ui_lang", "en") == "bn") "bn" else "en"
+        set(v) = sp.edit().putString("ui_lang", if (v == "bn") "bn" else "en").apply()
+
     var userName: String
         get() = sp.getString("user_name", "রাকিব") ?: "রাকিব"
         set(v) = sp.edit().putString("user_name", v.trim()).apply()
@@ -44,6 +49,11 @@ class Prefs(context: Context) {
     var language: String
         get() = sp.getString("language", "bn-BD") ?: "bn-BD"
         set(v) = sp.edit().putString("language", v.trim()).apply()
+
+    /** না বুঝলে বাংলা ও ইংরেজির মধ্যে নিজে বদলে শোনার চেষ্টা (Banglish-এর জন্য) */
+    var autoLang: Boolean
+        get() = sp.getBoolean("auto_lang", true)
+        set(v) = sp.edit().putBoolean("auto_lang", v).apply()
 
     var wakeWords: String
         get() = sp.getString("wake_words", DEFAULT_WAKE) ?: DEFAULT_WAKE
@@ -78,6 +88,11 @@ class Prefs(context: Context) {
     var edgeVoice: String
         get() = sp.getString("edge_voice", "bn-BD-NabanitaNeural") ?: "bn-BD-NabanitaNeural"
         set(v) = sp.edit().putString("edge_voice", v).apply()
+
+    /** ইংরেজি উত্তর পড়ার Edge কণ্ঠ */
+    var edgeVoiceEn: String
+        get() = sp.getString("edge_voice_en", "en-US-JennyNeural") ?: "en-US-JennyNeural"
+        set(v) = sp.edit().putString("edge_voice_en", v).apply()
 
     var voiceName: String
         get() = sp.getString("voice_name", "") ?: ""

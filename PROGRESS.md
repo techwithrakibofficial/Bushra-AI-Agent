@@ -1,5 +1,12 @@
 # PROGRESS — লিমিটের পর এখান থেকে শুরু করো (কিছু আবার লিখো না)
 
+## Round 2 (2026-10-20) — UI, language, voice
+- UI rebuilt to match the reference design: dark teal glass theme, logo header, neon orb (colour/speed follow Listening/Thinking/Speaking), Smart/Secure chips, big Start pill, Actions-off switch, input + Send, four tiles, bottom nav.
+- Language: English is the default; Settings → App language switches the whole app to Bangla instantly (strings in `values/` and `values-bn/`). Spoken replies follow the language the user speaks (Edge voices for both).
+- Voice pipeline: `IntentParser` fast path runs simple commands (open app, call, flashlight, volume, brightness, media, time, stop) without waiting for Gemini; Gemini client keeps one warm HTTP/2 connection and cools down failing models; first TTS chunk is short so speech starts sooner.
+- Continuous listening: partial results, longer end-of-speech silence window, auto-restart with back-off, offline fallback after repeated network errors, watchdog that restarts a hung recogniser, auto-switch Bangla/English on no-match.
+- Still untested on a real phone (call-time mic muting, loud music, background kill).
+
 ## সম্পূর্ণ (লেখা ও যাচাই)
 - Gradle/CI: `settings.gradle.kts`, `build.gradle.kts`, `app/build.gradle.kts`, `.github/workflows/build.yml`, `app/debug.keystore` (স্থির সাইনিং চাবি)
 - Manifest + রিসোর্স: `AndroidManifest.xml`, `values/`, `xml/accessibility_service_config.xml`, আইকন

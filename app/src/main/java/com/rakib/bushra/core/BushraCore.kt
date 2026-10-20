@@ -9,6 +9,8 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import androidx.annotation.StringRes
+import com.rakib.bushra.R
 import com.rakib.bushra.actions.ActionExecutor
 import com.rakib.bushra.ai.GeminiClient
 import com.rakib.bushra.ai.Tools
@@ -55,6 +57,7 @@ object BushraCore {
 
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    private var sysLatin = false
     private val gen = AtomicInteger(0)
     private val pending = AtomicInteger(0)
 
@@ -81,7 +84,28 @@ object BushraCore {
         gemini = GeminiClient(prefs)
         executor.vision = { img, q -> visionAsk(img, q) }
         initTts()
+        // সংযোগ আগেই গরম করা: প্রথম প্রশ্নের উত্তর দ্রুত আসে
+        scope.launch(Dispatchers.IO) { gemini.warmUp() }
     }
+
+    // ------------------------------------------------------------------ অ্যাপের ভাষায় লেখা
+
+    private var locCtx: Context? = null
+    private var locLang = ""
+
+    /** অ্যাপের বর্তমান ভাষায় (English/বাংলা) রিসোর্স স্ট্রিং আনে; ভাষা বদলালে নিজে হালনাগাদ হয় */
+    fun tr(@StringRes id: Int, vararg args: Any): String {
+        val lang = prefs.uiLang
+        var c = locCtx
+        if (c == null || locLang != lang) {
+            c = LocaleHelper.wrap(app)
+            locCtx = c
+            locLang = lang
+        }
+        return if (args.isEmpty()) c.getString(id) else c.getString(id, *args)
+    }
+
+    private fun isBn(): Boolean = prefs.uiLang == LocaleHelper.BN
 
     fun isBusy(): Boolean = mutex.isLocked
 
@@ -97,22 +121,49 @@ object BushraCore {
         mutex.withLock {
             if (!callerMode) BushraState.addChat(true, text)
             BushraState.phase.value = Phase.THINKING
-            val raw = try {
-                runAgent(text, callerMode)
-            } catch (e: Exception) {
-                "[চিন্তিত] দুঃখিত, একটা সমস্যা হয়েছে: ${e.message}"
-            }
-            val (emo, reply) = Emotion.split(raw)
+            // দ্রুত পথ: সহজ কমান্ড (অ্যাপ খোলা, টর্চ, ভলিউম...) এআই ছাড়াই সঙ্গে সঙ্গে চলে
+            val fast = if (callerMode) null else tryFastPath(text)
+            val (emo, reply) = fast ?: Emotion.split(
+                try {
+                    runAgent(text, callerMode)
+                } catch (e: Exception) {
+                    "[worried] " + tr(R.string.err_generic, e.message ?: "")
+                }
+            )
             if (callerMode) {
-                callTranscript.append("কলার: ").append(text).append('\n')
-                callTranscript.append("বুশরা: ").append(reply).append('\n')
+                callTranscript.append("Caller: ").append(text).append('\n')
+                callTranscript.append("Bushra: ").append(reply).append('\n')
             } else {
-                BushraState.addChat(false, reply)
+                if (reply.isNotBlank()) BushraState.addChat(false, reply)
                 history.add("user" to text)
                 history.add("model" to reply)
                 while (history.size > 16) history.removeAt(0)
             }
             speak(reply, emo, callerMode)
+        }
+    }
+
+    /** সফল হলে (আবেগ, উত্তর); মিল না পেলে বা কাজ না হলে null, তখন কথাটা Gemini-র কাছে যায় */
+    private suspend fun tryFastPath(text: String): Pair<Emotion, String>? {
+        val m = IntentParser.parse(text) ?: return null
+        return when (m.kind) {
+            IntentParser.Kind.STOP_TALKING -> {
+                stopSpeaking()
+                Emotion.NORMAL to ""
+            }
+            IntentParser.Kind.TIME -> {
+                val tm = SimpleDateFormat("h:mm a", LocaleHelper.locale(prefs.uiLang)).format(Date())
+                Emotion.NORMAL to tr(R.string.ack_time, tm)
+            }
+            IntentParser.Kind.ACTION -> {
+                val r = executor.execute(m.tool, m.args)
+                val ok = r.optBoolean("success", true)
+                noteAction(m.tool, m.args, ok)
+                if (!ok) return null
+                val id = app.resources.getIdentifier(m.ackKey, "string", app.packageName)
+                    .takeIf { it != 0 } ?: R.string.ack_done
+                Emotion.NORMAL to (if (m.ackArg != null) tr(id, m.ackArg) else tr(id))
+            }
         }
     }
 
@@ -131,7 +182,7 @@ object BushraCore {
         var guard = 0
         while (guard++ < 12) {
             val r = withContext(Dispatchers.IO) { gemini.generate(system, contents, tools) }
-            if (r.error != null) return "[চিন্তিত] " + friendlyError(r.error)
+            if (r.error != null) return "[worried] " + friendlyError(r.error)
             val parts = r.parts ?: JSONArray()
 
             // Gemini 3-এর thought signature যেমন এসেছে তেমনই ফেরত যেতে হয়
@@ -152,7 +203,7 @@ object BushraCore {
 
             if (calls.isEmpty()) {
                 val out = texts.toString().trim()
-                return if (out.isEmpty()) "ঠিক আছে।" else out
+                return if (out.isEmpty()) tr(R.string.ack_ok) else out
             }
 
             val responseParts = JSONArray()
@@ -170,7 +221,7 @@ object BushraCore {
             }
             contents.add(JSONObject().put("role", "user").put("parts", responseParts))
         }
-        return "[চিন্তিত] কাজটা অনেক ধাপের হয়ে যাচ্ছে, তাই এখানেই থামলাম।"
+        return "[worried] " + tr(R.string.err_steps)
     }
 
     private fun noteAction(name: String, args: JSONObject, ok: Boolean) {
@@ -189,13 +240,12 @@ object BushraCore {
             .put("parts", JSONArray().put(JSONObject().put("text", text)))
 
     private fun friendlyError(code: String): String = when {
-        code == "NO_KEY" -> "Gemini API key দেওয়া হয়নি। সেটিংসে গিয়ে key বসান।"
-        code == "NO_MODEL" -> "সেটিংসে কোনো মডেলের নাম নেই।"
-        code.startsWith("HTTP 400") && code.contains("API key", true) ->
-            "API key ঠিক নেই মনে হচ্ছে। সেটিংসে আবার দেখুন।"
-        code.startsWith("HTTP 429") -> "ফ্রি লিমিট শেষ হয়ে গেছে, একটু পরে আবার বলুন।"
-        code.startsWith("HTTP 403") -> "এই key দিয়ে অনুমতি মিলছে না। সেটিংসে ‘পরীক্ষা করো’ চেপে কারণ দেখুন।"
-        else -> "দুঃখিত, এখন উত্তর আনতে পারলাম না। সেটিংসে ‘পরীক্ষা করো’ চেপে কারণ দেখুন।"
+        code == "NO_KEY" -> tr(R.string.err_no_key)
+        code == "NO_MODEL" -> tr(R.string.err_no_model)
+        code.startsWith("HTTP 400") && code.contains("API key", true) -> tr(R.string.err_bad_key)
+        code.startsWith("HTTP 429") -> tr(R.string.err_quota)
+        code.startsWith("HTTP 403") -> tr(R.string.err_forbidden)
+        else -> tr(R.string.err_unknown)
     }
 
     // ------------------------------------------------------------------ ছবি দেখে বোঝা, পরীক্ষা, কল সারাংশ
@@ -207,18 +257,18 @@ object BushraCore {
         val content = JSONObject().put("role", "user").put("parts", parts)
         val r = withContext(Dispatchers.IO) {
             gemini.generate(
-                "তুমি ফোনের স্ক্রিনশট দেখে বাংলায় সংক্ষেপে ও স্পষ্টভাবে উত্তর দাও। দরকারে বোতাম বা লেখার অবস্থান বলো।",
+                "You look at a phone screenshot and answer briefly and clearly in ${if (isBn()) "Bangla (Bengali script)" else "English"}. Mention button or text positions when useful.",
                 listOf(content), null
             )
         }
-        if (r.error != null) return "ছবি বুঝতে পারিনি: ${r.error}"
+        if (r.error != null) return tr(R.string.err_vision, r.error ?: "")
         val sb = StringBuilder()
         val ps = r.parts ?: JSONArray()
         for (i in 0 until ps.length()) {
             val p = ps.optJSONObject(i) ?: continue
             if (!p.optBoolean("thought", false)) sb.append(p.optString("text", ""))
         }
-        return sb.toString().trim().ifEmpty { "কিছু বুঝতে পারিনি" }
+        return sb.toString().trim().ifEmpty { tr(R.string.err_vision_none) }
     }
 
     /** সেটিংস পেজের "পরীক্ষা করো" বাটন: key ও মডেল কাজ করছে কি না দেখায় */
@@ -228,11 +278,11 @@ object BushraCore {
                 val r = withContext(Dispatchers.IO) {
                     gemini.generate("Reply with one short word.", listOf(textContent("user", "hi")), null)
                 }
-                if (r.error == null) "✔ কাজ করছে (মডেল: ${r.model})" else "✘ ${r.error}"
+                if (r.error == null) tr(R.string.test_ok, r.model) else tr(R.string.test_fail, r.error ?: "")
             } catch (e: Exception) {
-                "✘ ${e.message}"
+                tr(R.string.test_fail, e.message ?: "")
             }
-            BushraLog.add("পরীক্ষা", msg)
+            BushraLog.add("Test", msg)
             onResult(msg)
         }
     }
@@ -249,7 +299,7 @@ object BushraCore {
         scope.launch {
             val r = withContext(Dispatchers.IO) {
                 gemini.generate(
-                    "নিচের ফোনকলের কথোপকথন থেকে এক-দুই বাক্যের বাংলা সারাংশ লেখো: কে কী চেয়েছে, কোনো বার্তা বা ফিরতি কলের দরকার কি না।",
+                    "Summarize this phone call conversation in one or two sentences in ${if (isBn()) "Bangla (Bengali script)" else "English"}: who the caller is, what they wanted, and whether a message or callback is needed.",
                     listOf(textContent("user", transcript)), null
                 )
             }
@@ -262,8 +312,8 @@ object BushraCore {
             s = s.trim().ifEmpty { transcript.take(200) }
             val stamp = SimpleDateFormat("d MMM, hh:mm a", Locale.getDefault()).format(Date())
             prefs.addCallLog("$stamp — $who: $s")
-            BushraState.addChat(false, "কলের সারাংশ ($who): $s")
-            if (announce) speak("$who এর কল নিয়ে: $s", Emotion.NORMAL, false)
+            BushraState.addChat(false, tr(R.string.call_summary_chat, who, s))
+            if (announce) speak(tr(R.string.call_summary_say, who, s), Emotion.NORMAL, false)
         }
     }
 
@@ -275,11 +325,13 @@ object BushraCore {
         val memText = if (mem.isEmpty()) "(কিছু নেই)" else mem.entries.joinToString("\n") { "- ${it.key}: ${it.value}" }
         val owner = prefs.userName.ifBlank { "ব্যবহারকারী" }
         val info = prefs.callerInfo.ifBlank { "(আলাদা করে কিছু দেওয়া নেই)" }
+        val defLang = if (isBn()) "Bangla (Bengali script)" else "English"
+        val langRule = "ভাষা: ব্যবহারকারী যে ভাষায় বলে (বাংলা, English বা মেশানো) ঠিক সেই ভাষাতেই উত্তর দাও; বুঝতে না পারলে $defLang। বাংলা সবসময় বাংলা অক্ষরে লেখো। (Language rule: always reply in the language the user spoke; default $defLang.)"
 
         if (callerMode) {
             return """
 তুমি "বুশরা", $owner-এর ব্যক্তিগত সহকারী। এখন একজন কলার $owner-কে ফোন করেছে; তুমি $owner-এর হয়ে ফোনে কথা বলছ।
-- ভদ্র, স্পষ্ট ও ছোট বাংলায় (১-২ বাক্য) কথা বলো। মার্কডাউন বা ইমোজি নয়।
+- ভদ্র, স্পষ্ট ও ছোট বাক্যে (১-২ বাক্য) কথা বলো। মার্কডাউন বা ইমোজি নয়।
 - কলারের নাম, কী দরকার ও জরুরি কি না জিজ্ঞেস করো; বার্তা $owner-কে পৌঁছে দেবে বলো।
 - নিচের তথ্য কলারকে অনুমতি না চেয়েই জানাতে পারো, প্রশ্ন করলে:
 $info
@@ -288,7 +340,8 @@ $memText
 - পাসওয়ার্ড, OTP, PIN, ব্যাংক বা কার্ড, NID, নিজের ঠিকানার বাইরের গোপন কিছু কখনো বলবে না।
 - ফোনের কোনো কাজ করার অনুরোধ এলে বিনয়ের সাথে বলো তুমি শুধু বার্তা নিতে পারো।
 - কলার বিদায় নিলে বা কথা শেষ হলে বিদায় জানাও।
-- উত্তরের শুরুতে একটি আবেগ-ট্যাগ বসাও, যেমন [স্বাভাবিক] বা [কোমল]।
+- $langRule
+- উত্তরের শুরুতে একটি আবেগ-ট্যাগ বসাও, যেমন [normal] বা [soft]।
 বর্তমান সময়: $now
 """.trimIndent()
         }
@@ -305,9 +358,10 @@ $memText
 তুমি "বুশরা" — $owner-এর ব্যক্তিগত এআই সহকারী। তুমি একজন তরুণী। $mode
 
 কথা বলার ধরন:
-- বাংলায় কথ্য ভাষায় বলো (ব্যবহারকারী অন্য ভাষায় বললে সেই ভাষায়)। উত্তর ছোট রাখো (১-৩ বাক্য), কারণ জোরে পড়ে শোনানো হয়। মার্কডাউন, তারকা, তালিকা, ইমোজি নয়।
+- $langRule
+- বাংলা বললে কথ্য ভাষায় বলো। উত্তর ছোট রাখো (১-৩ বাক্য), কারণ জোরে পড়ে শোনানো হয়। মার্কডাউন, তারকা, তালিকা, ইমোজি নয়।
 - মানুষের মতো আবেগ দেখাও: খুশি হলে উচ্ছ্বাস, দুঃখের কথায় কোমলতা, অজানায় কৌতূহল, প্রশংসায় লজ্জা।
-- প্রতিটি উত্তরের একদম শুরুতে ঠিক একটি আবেগ-ট্যাগ বসাও, এগুলোর একটি: ${Emotion.tagList}। যেমন "[খুশি] ঠিক আছে, গান চালাচ্ছি!"
+- প্রতিটি উত্তরের একদম শুরুতে ঠিক একটি আবেগ-ট্যাগ বসাও, এগুলোর একটি: ${Emotion.tagListEn}। যেমন "[happy] ঠিক আছে, গান চালাচ্ছি!" বা "[happy] Sure, playing it now!"
 
 কাজের নিয়ম:
 - কাজের অনুরোধ (কল, SMS, অ্যাপ খোলা, মেসেজ, সেটিংস, গান ইত্যাদি) টুল ব্যবহার করে সরাসরি করে ফেলো; অনুমতি চেয়ো না।
@@ -355,7 +409,7 @@ $memText
                     }
                 })
             } else {
-                BushraState.ttsStatus.value = "টেক্সট-টু-স্পিচ চালু করা যায়নি"
+                BushraState.ttsStatus.value = tr(R.string.tts_init_fail)
             }
         }
     }
@@ -365,11 +419,10 @@ $memText
         val locale = Locale.forLanguageTag(prefs.language)
         var r = t.setLanguage(locale)
         if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
-            BushraState.ttsStatus.value =
-                "ফোনের নিজের বাংলা ভয়েস ডেটা নেই (Edge ভয়েস চললে সমস্যা নেই)"
+            BushraState.ttsStatus.value = tr(R.string.tts_no_data)
             r = t.setLanguage(Locale.getDefault())
         } else {
-            BushraState.ttsStatus.value = "ফোনের ভয়েস ঠিক আছে"
+            BushraState.ttsStatus.value = tr(R.string.tts_ok)
         }
         val vn = prefs.voiceName
         if (vn.isNotBlank()) {
@@ -463,9 +516,9 @@ $memText
 
     /** Edge নিউরাল ভয়েসে বলে। অন্তত একটা টুকরো বাজলে true */
     private suspend fun speakEdge(text: String, emo: Emotion, inCall: Boolean, g: Int): Boolean {
-        val chunks = TtsText.chunks(text, 220)
+        val chunks = TtsText.chunks(text, 220, 90)
         if (chunks.isEmpty()) return false
-        val voice = prefs.edgeVoice
+        val voice = if (TtsText.isLatin(text)) prefs.edgeVoiceEn else prefs.edgeVoice
         var playedAny = false
         try {
             coroutineScope {
@@ -493,7 +546,7 @@ $memText
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            BushraLog.add("ভয়েস", "বাজাতে সমস্যা: ${e.message}".take(120))
+            BushraLog.add("Voice", "Playback problem: ${e.message}".take(120))
         }
         return playedAny
     }
@@ -516,7 +569,7 @@ $memText
                     mp.setOnErrorListener { m, _, _ ->
                         try { m.release() } catch (_: Exception) {}
                         if (player === mp) player = null
-                        BushraLog.add("ভয়েস", "প্লেয়ার ত্রুটি")
+                        BushraLog.add("Voice", "Player error")
                         if (cont.isActive) cont.resume(Unit)
                         true
                     }
@@ -553,6 +606,11 @@ $memText
         if (t == null || !ttsReady) {
             finishSpeech(g)
             return
+        }
+        val latin = TtsText.isLatin(text)
+        if (latin != sysLatin) {
+            sysLatin = latin
+            if (latin) t.setLanguage(Locale.US) else applyVoice()
         }
         t.setSpeechRate(emo.sysRate)
         val base = if (prefs.voiceFemale) 1.12f else 0.85f

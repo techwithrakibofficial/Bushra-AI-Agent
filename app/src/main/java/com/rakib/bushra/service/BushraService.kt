@@ -10,6 +10,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import com.rakib.bushra.R
+import com.rakib.bushra.core.LocaleHelper
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -87,9 +89,34 @@ class BushraService : Service() {
 
     private val listenRunnable = Runnable { startListening() }
 
+    // ক্রমাগত শোনার স্থিতিশীলতা: ত্রুটির ধারা, অফলাইন ফলব্যাক, ঝুলে যাওয়া ধরার ওয়াচডগ
+    private var errStreak = 0
+    private var netStreak = 0
+    private var offlineUntil = 0L
+    private var lastActivityAt = 0L
+
+    private val watchdog = object : Runnable {
+        override fun run() {
+            if (!running) return
+            val idle = SystemClock.elapsedRealtime() - lastActivityAt
+            // শোনার চেইন ২৫ সেকেন্ড নীরব, অথচ বুশরা ব্যস্ত বা কথা বলছে না: রিকগনাইজার ঝুলে গেছে, আবার চালু
+            if (idle > 25_000 && !BushraCore.isSpeaking() && !BushraCore.isBusy()) {
+                BushraLog.add("Listen", getString(R.string.log_listen_restart))
+                stopListening()
+                scheduleListen(150)
+            }
+            handler.postDelayed(this, 5_000)
+        }
+    }
+
     // ------------------------------------------------------------------ জীবনচক্র
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    /** নোটিফিকেশন ও কথার ভাষা অ্যাপের ভাষা অনুযায়ী */
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(LocaleHelper.wrap(base))
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
@@ -105,7 +132,7 @@ class BushraService : Service() {
         try {
             goForeground()
         } catch (e: Exception) {
-            BushraState.lastHeard.value = "সার্ভিস চালু করা যায়নি: ${e.message}"
+            BushraState.lastHeard.value = getString(R.string.svc_start_fail, e.message ?: "")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -139,6 +166,8 @@ class BushraService : Service() {
         if (BushraCore.prefs.bubble) {
             bubble = FloatingMic(this) { listenOnce() }.also { it.show() }
         }
+        lastActivityAt = SystemClock.elapsedRealtime()
+        handler.postDelayed(watchdog, 5_000)
         if (intent?.action == ACTION_LISTEN) listenOnce() else scheduleListen(500)
         return START_STICKY
     }
@@ -167,7 +196,7 @@ class BushraService : Service() {
         val nm = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= 26) {
             nm.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Bushra সেবা", NotificationManager.IMPORTANCE_LOW)
+                NotificationChannel(CHANNEL_ID, getString(R.string.notif_channel), NotificationManager.IMPORTANCE_LOW)
             )
         }
         val open = PendingIntent.getActivity(
@@ -185,11 +214,11 @@ class BushraService : Service() {
         )
         val n: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentTitle("বুশরা শুনছে")
-            .setContentText("\"বুশরা\" বলুন, বা ‘শোনো’ চাপুন")
+            .setContentTitle(getString(R.string.notif_title))
+            .setContentText(getString(R.string.notif_text))
             .setContentIntent(open)
-            .addAction(0, "শোনো", listen)
-            .addAction(0, "বন্ধ করো", stop)
+            .addAction(0, getString(R.string.notif_listen), listen)
+            .addAction(0, getString(R.string.notif_stop), stop)
             .setOngoing(true)
             .build()
         val type = if (Build.VERSION.SDK_INT >= 30) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
@@ -199,7 +228,7 @@ class BushraService : Service() {
     // ------------------------------------------------------------------ শোনা
 
     private val langs: List<String>
-        get() = listOf(BushraCore.prefs.language, "bn-IN", "bn", "en-US").distinct()
+        get() = listOf(BushraCore.prefs.language, "en-US", "bn-BD", "bn-IN").distinct()
 
     /** ভাসমান মাইক বা নোটিফিকেশন বাটন থেকে: একবার শুনে সরাসরি কমান্ড ধরে (ডাকনাম লাগে না) */
     fun listenOnce() {
@@ -212,6 +241,7 @@ class BushraService : Service() {
     }
 
     private fun scheduleListen(delayMs: Long) {
+        lastActivityAt = SystemClock.elapsedRealtime()
         handler.removeCallbacks(listenRunnable)
         handler.postDelayed(listenRunnable, delayMs)
     }
@@ -246,11 +276,11 @@ class BushraService : Service() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) {
-            BushraState.lastHeard.value = "মাইক্রোফোনের পারমিশন নেই"
+            BushraState.lastHeard.value = getString(R.string.err_mic_perm)
             return
         }
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            BushraState.lastHeard.value = "এই ফোনে স্পিচ রিকগনিশন পাওয়া যায়নি"
+            BushraState.lastHeard.value = getString(R.string.err_no_recog)
             return
         }
         if (musicBlocksListening()) {
@@ -267,64 +297,111 @@ class BushraService : Service() {
             val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang)
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
                 putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+                // স্মার্ট VAD: কথার মাঝের ছোট বিরতিতে কেটে না দিয়ে একটু বেশি অপেক্ষা করে
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1600L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1300L)
+                // নেটওয়ার্ক বারবার ভাঙলে কিছুক্ষণ অফলাইন শোনা
+                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, SystemClock.elapsedRealtime() < offlineUntil)
             }
             r.startListening(i)
         } catch (e: Exception) {
-            BushraLog.add("শোনা", "চালু করা যায়নি: ${e.message}".take(100))
-            scheduleListen(1500)
+            BushraLog.add("Listen", "Could not start: ${e.message}".take(100))
+            scheduleListen(backoff())
         }
     }
 
+    /** ধারাবাহিক ত্রুটিতে অপেক্ষা বাড়ে (০.৫ থেকে সর্বোচ্চ ৮ সেকেন্ড), যাতে ব্যাটারি/CPU নষ্ট না হয় */
+    private fun backoff(): Long = (500L shl errStreak.coerceIn(0, 4)).coerceAtMost(8_000L)
+
     private val listener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
+            lastActivityAt = SystemClock.elapsedRealtime()
             if (BushraState.phase.value == Phase.IDLE) BushraState.phase.value = Phase.LISTENING
         }
 
-        override fun onBeginningOfSpeech() {}
+        override fun onBeginningOfSpeech() {
+            lastActivityAt = SystemClock.elapsedRealtime()
+        }
 
         override fun onRmsChanged(rmsdB: Float) {
             BushraState.level.value = rmsdB
+            // কথা চলছে: ওয়াচডগকে জানাই যে রিকগনাইজার জীবিত
+            if (rmsdB > 2f) lastActivityAt = SystemClock.elapsedRealtime()
         }
 
         override fun onBufferReceived(buffer: ByteArray?) {}
 
-        override fun onEndOfSpeech() {}
+        override fun onEndOfSpeech() {
+            lastActivityAt = SystemClock.elapsedRealtime()
+        }
 
         override fun onError(error: Int) {
+            lastActivityAt = SystemClock.elapsedRealtime()
             if (BushraState.phase.value == Phase.LISTENING) BushraState.phase.value = Phase.IDLE
-            // কিছু না শুনলে one-shot শেষ; ক্রমাগত শোনা আবার শুরু
-            if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
-                oneShot = false
-                scheduleListen(200)
-                return
-            }
-            BushraLog.add("শোনা", "ত্রুটি কোড $error")
             when (error) {
-                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
-                    BushraState.lastHeard.value = "মাইক্রোফোনের পারমিশন নেই"
+                // কেউ কিছু বলেনি: ত্রুটি নয়, সঙ্গে সঙ্গে আবার শোনা (নীরবতায় সংযোগ ছাড়ে না)
+                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
+                    errStreak = 0
+                    netStreak = 0
+                    oneShot = false
+                    scheduleListen(120)
                 }
-                12, 13 -> { // ভাষা সমর্থিত নয়/নেই: পরের ভাষায় চেষ্টা
-                    langIdx = (langIdx + 1) % langs.size
-                    scheduleListen(400)
+                // কথা শোনা গেছে কিন্তু বোঝা যায়নি: Banglish-এর জন্য পরের ভাষায় চেষ্টা
+                SpeechRecognizer.ERROR_NO_MATCH -> {
+                    errStreak = 0
+                    oneShot = false
+                    if (BushraCore.prefs.autoLang) langIdx = (langIdx + 1) % langs.size
+                    scheduleListen(150)
                 }
-                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> scheduleListen(1500)
-                SpeechRecognizer.ERROR_CLIENT -> scheduleListen(700)
-                SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT,
-                SpeechRecognizer.ERROR_SERVER -> scheduleListen(2500)
-                else -> scheduleListen(500)
+                else -> {
+                    errStreak++
+                    BushraLog.add("Listen", getString(R.string.listen_err_code, error))
+                    when (error) {
+                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
+                            BushraState.lastHeard.value = getString(R.string.err_mic_perm)
+                        12, 13 -> { // ভাষা সমর্থিত নয়/নেই: পরের ভাষায় চেষ্টা
+                            langIdx = (langIdx + 1) % langs.size
+                            scheduleListen(400)
+                        }
+                        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT,
+                        SpeechRecognizer.ERROR_SERVER -> {
+                            netStreak++
+                            if (netStreak >= 3 && SystemClock.elapsedRealtime() >= offlineUntil) {
+                                offlineUntil = SystemClock.elapsedRealtime() + 60_000
+                                netStreak = 0
+                                BushraLog.add("Listen", getString(R.string.log_offline_mode))
+                            }
+                            stopListening()
+                            scheduleListen(backoff())
+                        }
+                        // মাইক অন্য অ্যাপের হাতে, বা রিকগনাইজার ব্যস্ত/ভাঙা: ধ্বংস করে নতুন করে শুরু
+                        else -> {
+                            stopListening()
+                            scheduleListen(backoff())
+                        }
+                    }
+                }
             }
         }
 
         override fun onResults(results: Bundle?) {
+            lastActivityAt = SystemClock.elapsedRealtime()
+            errStreak = 0
+            netStreak = 0
             if (BushraState.phase.value == Phase.LISTENING) BushraState.phase.value = Phase.IDLE
             val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: arrayListOf()
             onHeard(list)
         }
 
-        override fun onPartialResults(partialResults: Bundle?) {}
+        override fun onPartialResults(partialResults: Bundle?) {
+            lastActivityAt = SystemClock.elapsedRealtime()
+            val p = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                ?.firstOrNull()?.trim().orEmpty()
+            if (p.isNotEmpty()) BushraState.lastHeard.value = p
+        }
 
         override fun onEvent(eventType: Int, params: Bundle?) {}
     }
@@ -353,7 +430,7 @@ class BushraService : Service() {
         if (callMode == CallMode.IN_CALL) {
             if (autoCallActive) {
                 val t = text.lowercase()
-                if (listOf("রাখি", "রাখছি", "বাই", "bye", "আল্লাহ হাফেজ", "খোদা হাফেজ", "ধন্যবাদ, রাখ").any { t.contains(it) }) {
+                if (listOf("রাখি", "রাখছি", "বাই", "bye", "goodbye", "that's all", "আল্লাহ হাফেজ", "খোদা হাফেজ", "ধন্যবাদ, রাখ").any { t.contains(it) }) {
                     endAfterSpeak = true
                 }
                 BushraCore.ask(text, callerMode = true)
@@ -372,7 +449,7 @@ class BushraService : Service() {
         when {
             rest != null && rest.isBlank() -> {
                 commandUntil = now + 8000
-                BushraCore.speak("জি, বলুন।", Emotion.SOFT)
+                BushraCore.speak(getString(R.string.say_yes), Emotion.SOFT)
             }
             rest != null -> {
                 commandUntil = now + 9000
@@ -438,7 +515,7 @@ class BushraService : Service() {
                     if (callMode != CallMode.RINGING_PROMPT && callMode != CallMode.IN_CALL) {
                         callMode = CallMode.RINGING_PROMPT
                         announced = false
-                        callWho = BushraCore.executor.nameForNumber(number) ?: number ?: "অচেনা নম্বর"
+                        callWho = BushraCore.executor.nameForNumber(number) ?: number ?: getString(R.string.call_unknown)
                         BushraCore.stopSpeaking()
                         if (mode == "auto") {
                             scope.launch {
@@ -484,11 +561,8 @@ class BushraService : Service() {
         BushraCore.executor.answerCall()
         delay(900)
         BushraCore.executor.setSpeakerRaw(true)
-        val owner = BushraCore.prefs.userName.ifBlank { "মালিক" }
-        BushraCore.speak(
-            "হ্যালো, আমি বুশরা, $owner-এর সহকারী। উনি এখন কথা বলতে পারছেন না। আপনি কী বলতে চান, বলুন।",
-            Emotion.NORMAL, true
-        )
+        val owner = BushraCore.prefs.userName.ifBlank { getString(R.string.owner_fallback) }
+        BushraCore.speak(getString(R.string.call_auto_greet, owner), Emotion.NORMAL, true)
         // নিরাপত্তা: কল তিন মিনিটের বেশি চললে নিজে কেটে দেয়
         delay(180_000)
         if (autoCallActive && callMode == CallMode.IN_CALL) BushraCore.executor.endCall()
@@ -497,7 +571,7 @@ class BushraService : Service() {
     private fun announceCall() {
         if (announced || callMode != CallMode.RINGING_PROMPT) return
         announced = true
-        BushraCore.speak("$callWho ফোন করছে। ধরব, নাকি মেসেজ পাঠিয়ে দেব?", Emotion.CURIOUS)
+        BushraCore.speak(getString(R.string.call_announce, callWho), Emotion.CURIOUS)
     }
 
     private fun handleRingingCommand(text: String) {
@@ -522,12 +596,12 @@ class BushraService : Service() {
                     if (num != null) {
                         try {
                             BushraCore.executor.sendSmsRaw(num, BushraCore.prefs.busySms)
-                            BushraCore.speak("মেসেজ পাঠিয়ে দিয়েছি।", Emotion.NORMAL)
+                            BushraCore.speak(getString(R.string.call_msg_sent), Emotion.NORMAL)
                         } catch (e: Exception) {
-                            BushraCore.speak("মেসেজ পাঠাতে পারলাম না।", Emotion.WORRIED)
+                            BushraCore.speak(getString(R.string.call_msg_fail), Emotion.WORRIED)
                         }
                     } else {
-                        BushraCore.speak("কল কেটে দিয়েছি, কিন্তু নম্বর পাইনি তাই মেসেজ পাঠাতে পারলাম না।", Emotion.WORRIED)
+                        BushraCore.speak(getString(R.string.call_hangup_nonum), Emotion.WORRIED)
                     }
                 }
             }

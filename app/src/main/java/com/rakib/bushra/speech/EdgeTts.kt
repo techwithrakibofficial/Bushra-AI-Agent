@@ -37,8 +37,18 @@ object EdgeTts {
         Triple("bn-BD-NabanitaNeural", "নবনীতা (বাংলাদেশ, মেয়ে)", true),
         Triple("bn-IN-TanishaaNeural", "তানিশা (ভারত, মেয়ে)", true),
         Triple("bn-BD-PradeepNeural", "প্রদীপ (বাংলাদেশ, ছেলে)", false),
-        Triple("bn-IN-BashkarNeural", "ভাস্কর (ভারত, ছেলে)", false)
+        Triple("bn-IN-BashkarNeural", "ভাস্কর (ভারত, ছেলে)", false),
+        Triple("en-US-JennyNeural", "Jenny (US, female)", true),
+        Triple("en-US-AriaNeural", "Aria (US, female)", true),
+        Triple("en-IN-NeerjaNeural", "Neerja (India, female)", true),
+        Triple("en-GB-SoniaNeural", "Sonia (UK, female)", true)
     )
+
+    /** বাংলা কণ্ঠ */
+    val bnVoices: List<Triple<String, String, Boolean>> get() = voices.filter { it.first.startsWith("bn-") }
+
+    /** ইংরেজি কণ্ঠ */
+    val enVoices: List<Triple<String, String, Boolean>> get() = voices.filter { it.first.startsWith("en-") }
 
     fun displayName(short: String): String =
         voices.firstOrNull { it.first == short }?.second ?: short

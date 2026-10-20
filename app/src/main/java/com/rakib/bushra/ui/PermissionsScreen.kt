@@ -15,9 +15,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.rakib.bushra.R
 import com.rakib.bushra.core.BushraState
 
 private class PermItem(
@@ -35,7 +37,7 @@ fun PermissionsScreen(requestPerms: (Array<String>) -> Unit) {
     val tick = BushraState.resumeTick.collectAsState().value
 
     val items = listOf(
-        PermItem("ফোন ও কল", "কল করা, ধরা, কাটা, ইনকামিং কল চেনা",
+        PermItem(stringResource(R.string.perm_phone_t), stringResource(R.string.perm_phone_d),
             Perms.has(ctx, android.Manifest.permission.CALL_PHONE) &&
                 Perms.has(ctx, android.Manifest.permission.ANSWER_PHONE_CALLS) &&
                 Perms.has(ctx, android.Manifest.permission.READ_PHONE_STATE) &&
@@ -48,10 +50,10 @@ fun PermissionsScreen(requestPerms: (Array<String>) -> Unit) {
                 android.Manifest.permission.READ_CALL_LOG
             ))
         },
-        PermItem("মাইক্রোফোন", "\"বুশরা\" ডাক ও কমান্ড শোনা",
+        PermItem(stringResource(R.string.perm_mic_t), stringResource(R.string.perm_mic_d),
             Perms.has(ctx, android.Manifest.permission.RECORD_AUDIO)
         ) { requestPerms(arrayOf(android.Manifest.permission.RECORD_AUDIO)) },
-        PermItem("SMS", "মেসেজ পাঠানো ও পড়া",
+        PermItem(stringResource(R.string.perm_sms_t), stringResource(R.string.perm_sms_d),
             Perms.has(ctx, android.Manifest.permission.SEND_SMS) &&
                 Perms.has(ctx, android.Manifest.permission.READ_SMS)
         ) {
@@ -60,10 +62,10 @@ fun PermissionsScreen(requestPerms: (Array<String>) -> Unit) {
                 android.Manifest.permission.READ_SMS
             ))
         },
-        PermItem("কন্টাক্ট", "নাম বললে নম্বর খুঁজে পাওয়া",
+        PermItem(stringResource(R.string.perm_contacts_t), stringResource(R.string.perm_contacts_d),
             Perms.has(ctx, android.Manifest.permission.READ_CONTACTS)
         ) { requestPerms(arrayOf(android.Manifest.permission.READ_CONTACTS)) },
-        PermItem("নোটিফিকেশন", "চালু থাকার নোটিফিকেশন দেখানো",
+        PermItem(stringResource(R.string.perm_notif_t), stringResource(R.string.perm_notif_d),
             Build.VERSION.SDK_INT < 33 ||
                 Perms.has(ctx, android.Manifest.permission.POST_NOTIFICATIONS)
         ) {
@@ -71,19 +73,19 @@ fun PermissionsScreen(requestPerms: (Array<String>) -> Unit) {
                 requestPerms(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS))
             }
         },
-        PermItem("Accessibility (অ্যাপের ভেতরে কাজ)", "ফেসবুক, WhatsApp ইত্যাদির ভেতরে ট্যাপ, লেখা, স্ক্রল",
+        PermItem(stringResource(R.string.perm_access_t), stringResource(R.string.perm_access_d),
             Perms.accessibilityEnabled(ctx)
         ) { Perms.openAccessibility(ctx) },
-        PermItem("নোটিফিকেশন পড়া", "\"কী মেসেজ এল?\" প্রশ্নের উত্তর দিতে",
+        PermItem(stringResource(R.string.perm_notiflisten_t), stringResource(R.string.perm_notiflisten_d),
             Perms.notificationListenerEnabled(ctx)
         ) { Perms.openNotificationListener(ctx) },
-        PermItem("সেটিংস বদলানো", "উজ্জ্বলতা বদলানো",
+        PermItem(stringResource(R.string.perm_write_t), stringResource(R.string.perm_write_d),
             Perms.canWriteSettings(ctx)
         ) { Perms.openWriteSettings(ctx) },
-        PermItem("অন্য অ্যাপের ওপরে দেখানো", "ব্যাকগ্রাউন্ড থেকে অ্যাপ খুলতে সাহায্য করে",
+        PermItem(stringResource(R.string.perm_overlay_t), stringResource(R.string.perm_overlay_d),
             Perms.canOverlay(ctx)
         ) { Perms.openOverlay(ctx) },
-        PermItem("ব্যাটারি অপ্টিমাইজেশন বন্ধ", "ফোন যেন বুশরাকে ঘুম পাড়িয়ে না দেয়",
+        PermItem(stringResource(R.string.perm_battery_t), stringResource(R.string.perm_battery_d),
             Perms.ignoringBattery(ctx)
         ) { Perms.openBattery(ctx) }
     )
@@ -96,11 +98,11 @@ fun PermissionsScreen(requestPerms: (Array<String>) -> Unit) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("পারমিশন", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = Clay.text)
-        Text("$grantedCount/${items.size} টি চালু আছে", color = Clay.muted)
+        Text(stringResource(R.string.perm_title), fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = Clay.text)
+        Text(stringResource(R.string.perm_count, grantedCount, items.size), color = Clay.muted)
 
         ClayButton(
-            text = "সব সাধারণ পারমিশন একসাথে দাও",
+            text = stringResource(R.string.perm_grant_all),
             onClick = { requestPerms(Perms.runtime) },
             modifier = Modifier.fillMaxWidth()
         )
@@ -113,10 +115,10 @@ fun PermissionsScreen(requestPerms: (Array<String>) -> Unit) {
                         Text(item.desc, fontSize = 13.sp, color = Clay.muted)
                     }
                     if (item.granted) {
-                        Text("✔ চালু", color = Clay.ok, fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.perm_on), color = Clay.ok, fontWeight = FontWeight.Bold)
                     } else {
                         ClayButton(
-                            text = "দাও",
+                            text = stringResource(R.string.perm_give),
                             onClick = item.action,
                             modifier = Modifier.padding(start = 8.dp)
                         )
@@ -126,17 +128,15 @@ fun PermissionsScreen(requestPerms: (Array<String>) -> Unit) {
         }
 
         ClayCard {
-            Text("Accessibility চালু করা না গেলে", fontWeight = FontWeight.Bold, color = Clay.text)
+            Text(stringResource(R.string.perm_restricted_t), fontWeight = FontWeight.Bold, color = Clay.text)
             Text(
-                "Android 13+ এ ইন্টারনেট থেকে নামানো অ্যাপে এটা প্রথমে আটকানো থাকে। " +
-                    "নিচের বাটনে অ্যাপের তথ্য পেজ খুলবে: ওপরের ডান কোণের ⋮ মেনু চাপুন, " +
-                    "\"Allow restricted settings\" দিন, তারপর আবার Accessibility থেকে বুশরাকে চালু করুন।",
+                stringResource(R.string.perm_restricted_b),
                 fontSize = 13.sp,
                 color = Clay.muted,
                 modifier = Modifier.padding(vertical = 8.dp)
             )
             ClayButton(
-                text = "অ্যাপের তথ্য পেজ খোলো",
+                text = stringResource(R.string.perm_restricted_btn),
                 onClick = { Perms.openAppInfo(ctx) },
                 color = Clay.accent2,
                 modifier = Modifier.fillMaxWidth()

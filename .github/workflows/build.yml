@@ -40,11 +40,11 @@ jobs:
           name: Bushra-AI-Agent-apk
           path: app/build/outputs/apk/debug/app-debug.apk
 
-      # ফোন থেকে সরাসরি নামানোর জন্য: Releases পেজে সবসময় সর্বশেষ APK থাকবে
+      # Latest APK is always published on the Releases page for direct download on the phone
       - name: Publish latest APK to Releases
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           name: Bushra AI Agent (latest build)
-          body: সর্বশেষ বিল্ড। app-debug.apk নামিয়ে ফোনে ইনস্টল করুন।
+          body: Latest build. Download app-debug.apk and install it on your phone.
           files: app/build/outputs/apk/debug/app-debug.apk
